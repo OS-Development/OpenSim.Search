@@ -88,9 +88,10 @@ CREATE TABLE `hostsregister` (
   `host` varchar(255) NOT NULL,
   `port` int(5) NOT NULL,
   `register` int(10) NOT NULL,
-  `lastcheck` int(10) NOT NULL,
-  `failcounter` int(1) NOT NULL,
-  PRIMARY KEY  (`host`,`port`)
+  `nextcheck` int(10) NOT NULL,
+  `checked` tinyint(1) NOT NULL,
+  `failcounter` int(10) NOT NULL,
+  PRIMARY KEY (`host`,`port`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 
 -- --------------------------------------------------------
@@ -150,7 +151,7 @@ CREATE TABLE `parcelsales` (
   `infoUUID` char(36) NOT NULL default '00000000-0000-0000-0000-000000000000',
   `dwell` int(11) NOT NULL,
   `parentestate` int(11) NOT NULL default '1',
-  `mature` varchar(32) NOT NULL default 'false',
+  `mature` varchar(32) NOT NULL default 'PG',
   PRIMARY KEY  (`regionUUID`,`parcelUUID`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 

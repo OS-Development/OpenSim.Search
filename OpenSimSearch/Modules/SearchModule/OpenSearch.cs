@@ -473,7 +473,7 @@ namespace OpenSimSearch.Modules.OpenSearch
                 // event after the search,
                 // we should be able to find it here
                 // TODO do some (more) sensible error-handling here
-                remoteClient.SendAgentAlertMessage("Couldn't find event.",
+                remoteClient.SendAgentAlertMessage("Couldn't find this event.",
                         false);
                 return;
             }
@@ -519,7 +519,7 @@ namespace OpenSimSearch.Modules.OpenSearch
                 // event after the search,
                 // we should be able to find it here
                 // TODO do some (more) sensible error-handling here
-                remoteClient.SendAgentAlertMessage("Couldn't find classified.",
+                remoteClient.SendAgentAlertMessage("Couldn't find this classifieds.",
                         false);
                 return;
             }
@@ -549,12 +549,16 @@ namespace OpenSimSearch.Modules.OpenSearch
         public void HandleMapItemRequest(IClientAPI remoteClient, uint flags,
                                                  uint EstateID, bool godlike, uint itemtype, ulong regionhandle)
         {
+            //The following constant appears to be from GridLayerType enum
+            //defined in OpenMetaverse/GridManager.cs of libopenmetaverse.
             if (itemtype == 7) //(land sales)
             {
                 int tc = Environment.TickCount;
                 Hashtable ReqHash = new Hashtable();
+
+                //The flags are: SortAsc (1 << 15), PerMeterSort (1 << 17)
                 ReqHash["flags"] = "163840";
-                ReqHash["type"] = "4294967295 ";
+                ReqHash["type"] = "4294967295"; //This is -1 in 32 bits
                 ReqHash["price"] = "0";
                 ReqHash["area"] = "0";
                 ReqHash["query_start"] = "0";
@@ -578,8 +582,8 @@ namespace OpenSimSearch.Modules.OpenSearch
                 DirLandReplyData[] Landdata = new DirLandReplyData[count];
 
                 int i = 0;
-                List<string> ParcelLandingPoint = new List<string>();
-                List<string> ParcelRegionUUID = new List<string>();
+                string[] ParcelLandingPoint = new string[count];
+                string[] ParcelRegionUUID = new string[count];
                 foreach (Object o in dataArray)
                 {
                     Hashtable d = (Hashtable)o;
