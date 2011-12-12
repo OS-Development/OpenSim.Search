@@ -1,4 +1,4 @@
-<?
+<?php
 
 if($_SESSION[USERID] == ""){
 
@@ -23,27 +23,51 @@ window.location.href='index.php?page=home';
 <TD align=center width=200px><b><u>Event</u></b></TD>
 <TD align=center width=200px><b><u>Host</u></b></TD>
 </TR>
-<?
+<?php
 function Convert($input)
 {
-// This needs to convert the UUID to a Name LastName combination
-$host = "Unknown";
-return $host;
+	$DbLink->query("SELECT FirstName, LastName FROM ".C_USERS_TBL." WHERE PrincipalID = '".$input."'");
+	while(list($first,$last) = $DbLink->next_record())
+	{
+		if ($first != "" && $last != "")
+		{
+			$host = $first." ".$last;
+		}
+		else
+		{
+			$host = "Unknown";
+		}
+		return $host;
+	}
 }
 
 # Make a new UNIX_TIMESTAMP
 $now = time();
 # Get all events that are in the future
-$DbLink->query("select creatoruuid,dateUTC,eventid,name,eventflags from ossearch.events where dateUTC > $now ORDER BY dateUTC LIMIT 0,10");
+$DbLink->query("select creatoruuid,dateUTC,eventid,name,eventflags from osmodules.events where dateUTC > $now ORDER BY dateUTC LIMIT 0,10");
 
 while(list($creator,$time,$eventid,$eventname,$event_type) = $DbLink->next_record())
 {
- $event_time = date("m/d/Y, h:i a",$time);
+	$event_time = date("m/d/Y, h:i a",$time);
 
- $event_host = Convert($creator);
+	$DbLink->query("SELECT FirstName, LastName FROM ".C_USERS_TBL." WHERE PrincipalID = '".$creator."'");
+	while(list($first,$last) = $DbLink->next_record())
+	{
+		if ($first != "" && $last != "")
+		{
+			$event_host = $first." ".$last;
+		}
+		else
+		{
+			$event_host = "Unknown";
+		}
+	}
 
- if ($event_type == 0) $event_type = "<img height=25px width=25px title='PG Event' src = ./images/events/pink_star.gif>";
- if ($event_type == 1) $event_type = "<img height=25px width=25px title='Mature Event' src = ./images/events/blue_star.gif>";
+
+
+if ($event_type == 0) $event_type = "<img height=25px width=25px title='PG Event' src = ./images/events/event_G.png>";
+if ($event_type == 1) $event_type = "<img height=25px width=25px title='Mature Event' src = ./images/events/event_M.png>";
+if ($event_type == 2) $event_type = "<img height=25px width=25px title='Adult Event' src = ./images/events/event_A.png>";
 
 ?>
     <TR>
@@ -52,12 +76,12 @@ while(list($creator,$time,$eventid,$eventname,$event_type) = $DbLink->next_recor
  
       <TD align=center><B><?=$event_type?></B></TD>
 
-	  <TD><B><?=$eventname?></B></TD>
+	  <TD align=center><B><?=$eventname?></B></TD>
 
-      <TD><B><?=$event_host?></B></TD>
+      <TD align=center><B><?=$event_host?></B></TD>
 
     </TR>
-<?
+<?php
   }
 }
 ?>

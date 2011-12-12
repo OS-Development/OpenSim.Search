@@ -27,7 +27,6 @@ namespace OpenSimSearch.Modules.OpenSearch
         //
         // Module vars
         //
-        private IConfigSource m_gConfig;
         private List<Scene> m_Scenes = new List<Scene>();
         private string m_SearchServer = "";
         private bool m_Enabled = true;
@@ -63,8 +62,6 @@ namespace OpenSimSearch.Modules.OpenSearch
 
             if (!m_Scenes.Contains(scene))
                 m_Scenes.Add(scene);
-
-            m_gConfig = config;
 
             // Hook up events
             scene.EventManager.OnNewClient += OnNewClient;
@@ -212,8 +209,8 @@ namespace OpenSimSearch.Modules.OpenSearch
                 data[i].forSale = Convert.ToBoolean(d["for_sale"]);
                 data[i].auction = Convert.ToBoolean(d["auction"]);
                 data[i].dwell = Convert.ToSingle(d["dwell"]);
-                i++;
-                if (i >= count)
+
+                if (++i >= count)
                     break;
             }
 
@@ -253,8 +250,8 @@ namespace OpenSimSearch.Modules.OpenSearch
                 data[i].parcelID = new UUID(d["parcel_id"].ToString());
                 data[i].name = d["name"].ToString();
                 data[i].dwell = Convert.ToSingle(d["dwell"]);
-                i++;
-                if (i >= count)
+
+                if (++i >= count)
                     break;
             }
 
@@ -306,8 +303,8 @@ namespace OpenSimSearch.Modules.OpenSearch
                 data[i].forSale = Convert.ToBoolean(d["for_sale"]);
                 data[i].salePrice = Convert.ToInt32(d["sale_price"]);
                 data[i].actualArea = Convert.ToInt32(d["area"]);
-                i++;
-                if (i >= count)
+
+                if (++i >= count)
                     break;
             }
 
@@ -317,13 +314,13 @@ namespace OpenSimSearch.Modules.OpenSearch
         public void DirFindQuery(IClientAPI remoteClient, UUID queryID,
                 string queryText, uint queryFlags, int queryStart)
         {
-            if ((queryFlags & 1) != 0)		//People (1 << 0)
+            if ((queryFlags & 1) != 0)      //People (1 << 0)
             {
                 DirPeopleQuery(remoteClient, queryID, queryText, queryFlags,
                         queryStart);
                 return;
             }
-            else if ((queryFlags & 32) != 0)	//DateEvents (1 << 5)
+            else if ((queryFlags & 32) != 0)    //DateEvents (1 << 5)
             {
                 DirEventsQuery(remoteClient, queryID, queryText, queryFlags,
                         queryStart);
@@ -355,6 +352,7 @@ namespace OpenSimSearch.Modules.OpenSearch
 
             remoteClient.SendDirPeopleReply(queryID, data);
         }
+
         public void DirEventsQuery(IClientAPI remoteClient, UUID queryID,
                 string queryText, uint queryFlags, int queryStart)
         {
@@ -394,15 +392,15 @@ namespace OpenSimSearch.Modules.OpenSearch
                 data[i].date = d["date"].ToString();
                 data[i].unixTime = Convert.ToUInt32(d["unix_time"]);
                 data[i].eventFlags = Convert.ToUInt32(d["event_flags"]);
-                i++;
-                if (i >= count)
+
+                if (++i >= count)
                     break;
             }
 
             remoteClient.SendDirEventsReply(queryID, data);
         }
 
-        public void DirClassifiedQuery(IClientAPI remoteClient, UUID queryID, 
+        public void DirClassifiedQuery(IClientAPI remoteClient, UUID queryID,
                 string queryText, uint queryFlags, uint category,
                 int queryStart)
         {
@@ -443,8 +441,8 @@ namespace OpenSimSearch.Modules.OpenSearch
                 data[i].creationDate = Convert.ToUInt32(d["creation_date"]);
                 data[i].expirationDate = Convert.ToUInt32(d["expiration_date"]);
                 data[i].price = Convert.ToInt32(d["priceforlisting"]);
-                i++;
-                if (i >= count)
+
+                if (++i >= count)
                     break;
             }
 
@@ -512,15 +510,17 @@ namespace OpenSimSearch.Modules.OpenSearch
                 return;
             }
 
+            //The viewer seems to issue an info request even when it is
+            //creating a new classified which means the data hasn't been
+            //saved to the database yet so there is no info to find.
             ArrayList dataArray = (ArrayList)result["data"];
             if (dataArray.Count == 0)
             {
-                // something bad happened here, if we could return an
-                // event after the search,
-                // we should be able to find it here
+                // Something bad happened here if we could not return an
+                // event after the search. We should be able to find it here.
                 // TODO do some (more) sensible error-handling here
-                remoteClient.SendAgentAlertMessage("Couldn't find this classifieds.",
-                        false);
+//                remoteClient.SendAgentAlertMessage("Couldn't find data for classified ad.",
+//                        false);
                 return;
             }
 
@@ -546,14 +546,15 @@ namespace OpenSimSearch.Modules.OpenSearch
                     Convert.ToByte(d["classifiedflags"]),
                     Convert.ToInt32(d["priceforlisting"]));
         }
+
         public void HandleMapItemRequest(IClientAPI remoteClient, uint flags,
-                                                 uint EstateID, bool godlike, uint itemtype, ulong regionhandle)
+                                         uint EstateID, bool godlike,
+                                         uint itemtype, ulong regionhandle)
         {
             //The following constant appears to be from GridLayerType enum
             //defined in OpenMetaverse/GridManager.cs of libopenmetaverse.
-            if (itemtype == 7) //(land sales)
+            if (itemtype == (uint)OpenMetaverse.GridItemType.LandForSale)
             {
-                int tc = Environment.TickCount;
                 Hashtable ReqHash = new Hashtable();
 
                 //The flags are: SortAsc (1 << 15), PerMeterSort (1 << 17)
@@ -584,12 +585,14 @@ namespace OpenSimSearch.Modules.OpenSearch
                 int i = 0;
                 string[] ParcelLandingPoint = new string[count];
                 string[] ParcelRegionUUID = new string[count];
+
                 foreach (Object o in dataArray)
                 {
                     Hashtable d = (Hashtable)o;
 
                     if (d["name"] == null)
                         continue;
+
                     Landdata[i] = new DirLandReplyData();
                     Landdata[i].parcelID = new UUID(d["parcel_id"].ToString());
                     Landdata[i].name = d["name"].ToString();
@@ -599,34 +602,137 @@ namespace OpenSimSearch.Modules.OpenSearch
                     Landdata[i].actualArea = Convert.ToInt32(d["area"]);
                     ParcelLandingPoint[i] = d["landing_point"].ToString();
                     ParcelRegionUUID[i] = d["region_UUID"].ToString();
-                    i++;
-                    if (i >= count)
+
+                    if (++i >= count)
                         break;
                 }
-                i = 0;
+
+                List<mapItemReply> mapitems = new List<mapItemReply>();
                 uint locX = 0;
                 uint locY = 0;
 
-                List<mapItemReply> mapitems = new List<mapItemReply>();
-
+                i = 0;
                 foreach (DirLandReplyData landDir in Landdata)
                 {
-                    foreach(Scene scene in m_Scenes)
+                    foreach (Scene scene in m_Scenes)
                     {
-                        if(scene.RegionInfo.RegionID.ToString() == ParcelRegionUUID[i])
+                        if (scene.RegionInfo.RegionID.ToString() == ParcelRegionUUID[i])
                         {
                             locX = scene.RegionInfo.RegionLocX;
                             locY = scene.RegionInfo.RegionLocY;
+                            break;
                         }
                     }
                     string[] landingpoint = ParcelLandingPoint[i].Split('/');
                     mapItemReply mapitem = new mapItemReply();
-                    mapitem.x = (uint)(locX + Convert.ToDecimal(landingpoint[0]));
-                    mapitem.y = (uint)(locY + Convert.ToDecimal(landingpoint[1]));
+                    mapitem.x = (uint)((locX * 256) + Convert.ToDecimal(landingpoint[0]));
+                    mapitem.y = (uint)((locY * 256) + Convert.ToDecimal(landingpoint[1]));
                     mapitem.id = landDir.parcelID;
                     mapitem.name = landDir.name;
                     mapitem.Extra = landDir.actualArea;
                     mapitem.Extra2 = landDir.salePrice;
+                    mapitems.Add(mapitem);
+                    i++;
+                }
+                remoteClient.SendMapItemReply(mapitems.ToArray(), itemtype, flags);
+                mapitems.Clear();
+            }
+
+            if (itemtype == (uint)OpenMetaverse.GridItemType.PgEvent ||
+                itemtype == (uint)OpenMetaverse.GridItemType.MatureEvent ||
+                itemtype == (uint)OpenMetaverse.GridItemType.AdultEvent)
+            {
+                Hashtable ReqHash = new Hashtable();
+
+                //Find the maturity level
+                int maturity = (1 << 24);
+
+                //Find the maturity level
+                if (itemtype == (uint)OpenMetaverse.GridItemType.MatureEvent)
+                    maturity = (1 << 25);
+                else
+                {
+                    if (itemtype == (uint)OpenMetaverse.GridItemType.AdultEvent)
+                        maturity = (1 << 26);
+                }
+
+                //The flags are: SortAsc (1 << 15), PerMeterSort (1 << 17)
+                maturity |= 163840;
+
+                //Character before | is number of days before/after current date
+                //Characters after | is the number for a category
+                ReqHash["text"] = "0|0";
+                ReqHash["flags"] = maturity.ToString();
+                ReqHash["query_start"] = "0";
+
+                Hashtable result = GenericXMLRPCRequest(ReqHash,
+                                                        "dir_events_query");
+
+                if (!Convert.ToBoolean(result["success"]))
+                {
+                    remoteClient.SendAgentAlertMessage(
+                        result["errorMessage"].ToString(), false);
+                    return;
+                }
+
+                ArrayList dataArray = (ArrayList)result["data"];
+
+                int count = dataArray.Count;
+                if (count > 100)
+                    count = 101;
+
+                DirEventsReplyData[] Eventsdata = new DirEventsReplyData[count];
+
+                int i = 0;
+                string[] ParcelLandingPoint = new string[count];
+                string[] ParcelRegionUUID = new string[count];
+
+                foreach (Object o in dataArray)
+                {
+                    Hashtable d = (Hashtable)o;
+
+                    if (d["name"] == null)
+                        continue;
+
+                    Eventsdata[i] = new DirEventsReplyData();
+                    Eventsdata[i].ownerID = new UUID(d["owner_id"].ToString());
+                    Eventsdata[i].name = d["name"].ToString();
+                    Eventsdata[i].eventID = (uint)Convert.ToInt32(d["event_id"]);
+                    Eventsdata[i].date = d["date"].ToString();
+                    Eventsdata[i].unixTime = (uint)Convert.ToInt32(d["unix_time"]);
+                    Eventsdata[i].eventFlags = (uint)Convert.ToInt32(d["event_flags"]);
+                    ParcelLandingPoint[i] = d["landing_point"].ToString();
+                    ParcelRegionUUID[i] = d["region_UUID"].ToString();
+
+                    if (++i >= count)
+                        break;
+                }
+
+                List<mapItemReply> mapitems = new List<mapItemReply>();
+                uint locX = 0;
+                uint locY = 0;
+
+                i = 0;
+
+                foreach (DirEventsReplyData Eventdata in Eventsdata)
+                {
+                    foreach (Scene scene in m_Scenes)
+                    {
+                        if (scene.RegionInfo.RegionID.ToString() == ParcelRegionUUID[i])
+                        {
+                            locX = scene.RegionInfo.RegionLocX;
+                            locY = scene.RegionInfo.RegionLocY;
+                            break;
+                        }
+                    }
+                    string[] landingpoint = ParcelLandingPoint[i].Split('/');
+                    mapItemReply mapitem = new mapItemReply();
+                    mapitem.x = (uint)((locX * 256) + Convert.ToDecimal(landingpoint[0]));
+                    mapitem.y = (uint)((locY * 256) + Convert.ToDecimal(landingpoint[1]));
+                    mapitem.id = UUID.Random();
+                    mapitem.name = Eventdata.name;
+                    mapitem.Extra = (int)Eventdata.unixTime;
+                    mapitem.Extra2 = (int)Eventdata.eventID;
                     mapitems.Add(mapitem);
                     i++;
                 }

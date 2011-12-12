@@ -1,4 +1,4 @@
-<?PHP
+<?php
 //The description of the flags used in this file are being based on the
 //DirFindFlags enum which is defined in OpenMetaverse/DirectoryManager.cs
 //of the libopenmetaverse library.
@@ -33,7 +33,7 @@ function join_terms($glue, $terms, $add_paren)
     }
     else
     {
-        if (count($terms) > 0)
+        if (count($terms) == 1)
             $type = $terms[0];
         else
             $type = "";
@@ -105,13 +105,14 @@ function dir_places_query($method_name, $params, $app_data)
         $order = "dwell DESC,";
 
     if ($category > 0)
-        $category = "searchcategory = '".mysql_escape_string($category)."' AND ";
+        $category = "searchcategory = '".mysql_real_escape_string($category)."' AND ";
     else
         $category = "";
 
+    $text = mysql_real_escape_string($text);
     $result = mysql_query("SELECT * FROM parcels WHERE $category " .
-            "(parcelname LIKE '%" . mysql_escape_string($text) . "%'" .
-            " OR description LIKE '%" . mysql_escape_string($text) . "%')" .
+            "(parcelname LIKE '%$text%'" .
+            " OR description LIKE '%$text%')" .
             $type . " ORDER BY $order parcelname" .
             " LIMIT ".(0+$query_start).",101");
 
@@ -135,7 +136,7 @@ function dir_places_query($method_name, $params, $app_data)
 }
 
 #
-# Popular Place Query
+# Popular Places Query
 #
 
 xmlrpc_server_register_method($xmlrpc_server, "dir_popular_query",
@@ -143,9 +144,11 @@ xmlrpc_server_register_method($xmlrpc_server, "dir_popular_query",
 
 function dir_popular_query($method_name, $params, $app_data)
 {
-    $req      = $params[0];
+    $req         = $params[0];
 
-    $flags    = $req['flags'];
+    $text        = $req['text'];
+    $flags       = $req['flags'];
+    $query_start = $req['query_start'];
 
     $terms = array();
 
@@ -155,12 +158,19 @@ function dir_popular_query($method_name, $params, $app_data)
     if ($flags & 0x0800)    //PgSimsOnly (1 << 11)
         $terms[] = "mature = 0";
 
-    $where = "";
+    if ($text != "")
+    {
+        $text = mysql_real_escape_string($text);
+        $terms[] = "(name LIKE '%$text%')";
+    }
+
     if (count($terms) > 0)
         $where = " WHERE " . join_terms(" AND ", $terms, False);
+    else
+        $where = "";
 
-    //FIXME: Should there be a limit on the number of results?
-    $result = mysql_query("SELECT * FROM popularplaces" . $where);
+    $result = mysql_query("SELECT * FROM popularplaces" . $where .
+                " LIMIT " . mysql_real_escape_string($query_start) . ",101");
 
     $data = array();
     while (($row = mysql_fetch_assoc($result)))
@@ -223,9 +233,9 @@ function dir_land_query($method_name, $params, $app_data)
         $terms[] = $s;
 
     if ($flags & 0x100000)  //LimitByPrice (1 << 20)
-        $terms[] = "saleprice <= '" . mysql_escape_string($price) . "'";
+        $terms[] = "saleprice <= '" . mysql_real_escape_string($price) . "'";
     if ($flags & 0x200000)  //LimitByArea (1 << 21)
-        $terms[] = "area >= '" . mysql_escape_string($area) . "'";
+        $terms[] = "area >= '" . mysql_real_escape_string($area) . "'";
 
     //The PerMeterSort flag is always passed from a map item query.
     //It doesn't hurt to have this as the default search order.
@@ -240,13 +250,14 @@ function dir_land_query($method_name, $params, $app_data)
     if (!($flags & 0x8000)) //SortAsc (1 << 15)
         $order .= " DESC";
 
-    $where = "";
     if (count($terms) > 0)
         $where = " WHERE " . join_terms(" AND ", $terms, False);
+    else
+        $where = "";
 
     $sql = "SELECT *, saleprice/area AS lsq FROM parcelsales" . $where .
                 " ORDER BY " . $order . " LIMIT " .
-                mysql_escape_string($query_start) . ",101";
+                mysql_real_escape_string($query_start) . ",101";
 
     $result = mysql_query($sql);
 
@@ -303,18 +314,29 @@ function dir_events_query($method_name, $params, $app_data)
 
     $day        =    $pieces[0];
     $category   =    $pieces[1];
+    if (count($pieces) < 3)
+        $search_text = "";
+    else
+        $search_text = $pieces[2];
 
-    //Setting a variable for NOW
-    $now        =    time();
+    //Get todays date/time and adjust it to UTC
+    $now        =    time() - date_offset_get(new DateTime);
 
     $terms = array();
 
-    //Is $day a number of days (before or after current date)?
-    if ($day < 0 || $day > 0)
-        $now += $day * (7 * 24 * 60 * 60);
-    $terms[] = "dateUTC > ".$now;
+    if ($day == "u")
+        $terms[] = "dateUTC > ".$now;
+    else
+    {
+        //Is $day a number of days before or after current date?
+        if ($day != 0)
+            $now += $day * 86400;
+        $now -= ($now % 86400);
+        $then = $now + 86400;
+        $terms[] = "(dateUTC > ".$now." AND dateUTC <= ".$then.")";
+    }
 
-    if ($category <> 0)
+    if ($category != 0)
         $terms[] = "category = ".$category."";
 
     $type = array();
@@ -325,14 +347,24 @@ function dir_events_query($method_name, $params, $app_data)
     if ($flags & 67108864)  //IncludeAdult (1 << 26)
         $type[] = "eventflags = 2";
 
-    $terms[] = join_terms(" OR ", $type, True);
+    //Was there at least one PG, Mature, or Adult flag?
+    if (count($type) > 0)
+        $terms[] = join_terms(" OR ", $type, True);
 
-    $where = "";
+    if ($search_text != "")
+    {
+        $search_text = mysql_real_escape_string($search_text);
+        $terms[] = "(name LIKE '%$search_text%' OR " .
+                    "description LIKE '%$search_text%')";
+    }
+
     if (count($terms) > 0)
         $where = " WHERE " . join_terms(" AND ", $terms, False);
+    else
+        $where = "";
 
     $sql = "SELECT * FROM events". $where.
-           " LIMIT " . mysql_escape_string($query_start) . ",101";
+           " LIMIT " . mysql_real_escape_string($query_start) . ",101";
 
     $result = mysql_query($sql);
 
@@ -348,7 +380,9 @@ function dir_events_query($method_name, $params, $app_data)
                 "event_id" => $row["eventid"],
                 "date" => $date,
                 "unix_time" => $row["dateUTC"],
-                "event_flags" => $row["eventflags"]);
+                "event_flags" => $row["eventflags"],
+                "landing_point" => $row["globalPos"],
+                "region_UUID" => $row["simname"]);
     }
 
     $response_xml = xmlrpc_encode(array(
@@ -396,28 +430,27 @@ function dir_classified_query ($method_name, $params, $app_data)
 //    if ($flags & 64)  //Adult (1 << 6)
 //        $terms[] = "classifiedflags & ? > 0";
 
-    $type = "";
     if (count($terms) > 0)
-        $type = join_terms(" OR ", $terms, True);
+        $terms[] = join_terms(" OR ", $terms, True);
 
-    if ($category <> 0)
-        $category = "category = ".$category."";
-    else
-        $category = "";
+    if ($category != 0)
+        $terms[] = "category = ".$category."";
 
-    if ($type == "" && $category == "")
-        $type = "";
-    else
+    if ($text != "")
     {
-        if ($type == "" || $category == "")
-            $where = " WHERE " . $type . $category;
-        else
-            $where = " WHERE " . $type . " AND " . $category;
+        $text = mysql_real_escape_string($text);
+        $terms[] = "(name LIKE '%$text%' OR " .
+                    "description LIKE '%$text%')";
     }
+
+    if (count($terms) > 0)
+        $where = " WHERE " . join_terms(" AND ", $terms, False);
+    else
+        $where = "";
 
     $sql = "SELECT * FROM classifieds" . $where .
            " ORDER BY priceforlisting DESC" .
-           " LIMIT " . mysql_escape_string($query_start) . ",101";
+           " LIMIT " . mysql_real_escape_string($query_start) . ",101";
 
     $result = mysql_query($sql);
 
@@ -455,7 +488,7 @@ function event_info_query($method_name, $params, $app_data)
     $eventID    = $req['eventID'];
 
     $sql =  "SELECT * FROM events WHERE eventID = " .
-            mysql_escape_string($eventID);
+            mysql_real_escape_string($eventID);
 
     $result = mysql_query($sql);
 
@@ -464,6 +497,7 @@ function event_info_query($method_name, $params, $app_data)
     {
         $date = strftime("%G-%m-%d %H:%M:%S",$row["dateUTC"]);
 
+        $category = "*Unspecified*";
         if ($row['category'] == 18)    $category = "Discussion";
         if ($row['category'] == 19)    $category = "Sports";
         if ($row['category'] == 20)    $category = "Live Music";
@@ -514,7 +548,7 @@ function classifieds_info_query($method_name, $params, $app_data)
     $classifiedID    = $req['classifiedID'];
 
     $sql =  "SELECT * FROM classifieds WHERE classifieduuid = '" .
-            mysql_escape_string($classifiedID). "'";
+            mysql_real_escape_string($classifiedID). "'";
 
     $result = mysql_query($sql);
 
