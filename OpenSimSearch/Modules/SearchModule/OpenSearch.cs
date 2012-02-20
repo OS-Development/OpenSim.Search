@@ -14,10 +14,15 @@ using OpenSim.Framework;
 using OpenSim.Region.Framework.Interfaces;
 using OpenSim.Region.Framework.Scenes;
 using OpenSim.Services.Interfaces;
+using Mono.Addins;
+
+[assembly: Addin("OpenSearchModule", "0.1")]
+[assembly: AddinDependency("OpenSim", "0.5")]
 
 namespace OpenSimSearch.Modules.OpenSearch
 {
-    public class OpenSearchModule : IRegionModule
+    [Extension(Path = "/OpenSim/RegionModules", NodeName = "RegionModule")]
+    public class OpenSearchModule : ISearchModule, ISharedRegionModule
     {
         //
         // Log module
@@ -31,46 +36,69 @@ namespace OpenSimSearch.Modules.OpenSearch
         private string m_SearchServer = "";
         private bool m_Enabled = true;
 
-        public void Initialise(Scene scene, IConfigSource config)
+        public void Initialise(IConfigSource config)
+        {
+            IConfig searchConfig = config.Configs["Search"];
+
+            if (searchConfig == null)
+            {
+                m_log.Info("[SEARCH] Not configured, disabling");
+                m_Enabled = false;
+                return;
+            }
+            m_SearchServer = searchConfig.GetString("SearchURL", "");
+            if (m_SearchServer == "")
+            {
+                m_log.Error("[SEARCH] No search server, disabling search");
+                m_Enabled = false;
+                return;
+            }
+            else
+            {
+                m_log.Info("[SEARCH] Search module is activated");
+                m_Enabled = true;
+            }
+        }
+
+        public void AddRegion(Scene scene)
         {
             if (!m_Enabled)
                 return;
 
-            IConfig searchConfig = config.Configs["Search"];
-
-            if (m_Scenes.Count == 0) // First time
-            {
-                if (searchConfig == null)
-                {
-                    m_log.Info("[SEARCH] Not configured, disabling");
-                    m_Enabled = false;
-                    return;
-                }
-                m_SearchServer = searchConfig.GetString("SearchURL", "");
-                if (m_SearchServer == "")
-                {
-                    m_log.Error("[SEARCH] No search server, disabling search");
-                    m_Enabled = false;
-                    return;
-                }
-                else
-                {
-                    m_log.Info("[SEARCH] Search module is activated");
-                    m_Enabled = true;
-                }
-            }
-
-            if (!m_Scenes.Contains(scene))
-                m_Scenes.Add(scene);
-
             // Hook up events
             scene.EventManager.OnNewClient += OnNewClient;
+
+            // Take ownership of the ISearchModule service
+            scene.RegisterModuleInterface<ISearchModule>(this);
+
+            // Add our scene to our list...
+            lock(m_Scenes)
+            {
+                m_Scenes.Add(scene);
+            }
+
+        }
+
+        public void RemoveRegion(Scene scene)
+        {
+            if (!m_Enabled)
+                return;
+
+            scene.UnregisterModuleInterface<ISearchModule>(this);
+            m_Scenes.Remove(scene);
+        }
+
+        public void RegionLoaded(Scene scene)
+        {
+        }
+
+        public Type ReplaceableInterface
+        {
+            get { return null; }
         }
 
         public void PostInitialise()
         {
-            if (!m_Enabled)
-                return;
         }
 
         public void Close()
@@ -280,8 +308,18 @@ namespace OpenSimSearch.Modules.OpenSearch
             }
 
             ArrayList dataArray = (ArrayList)result["data"];
+            int count = 0;
 
-            int count = dataArray.Count;
+            /* Count entries in dataArray with valid region name to */
+            /* prevent allocating data array with too many entries. */
+            foreach (Object o in dataArray)
+            {
+                Hashtable d = (Hashtable)o;
+
+                if (d["name"] != null)
+                    ++count;
+            }
+
             if (count > 100)
                 count = 101;
 
@@ -337,6 +375,7 @@ namespace OpenSimSearch.Modules.OpenSearch
                     new DirPeopleReplyData[accounts.Count];
 
             int i = 0;
+
             foreach (UserAccount item in accounts)
             {
                 data[i] = new DirPeopleReplyData();
@@ -580,11 +619,9 @@ namespace OpenSimSearch.Modules.OpenSearch
                 if (count > 100)
                     count = 101;
 
-                DirLandReplyData[] Landdata = new DirLandReplyData[count];
-
-                int i = 0;
-                string[] ParcelLandingPoint = new string[count];
-                string[] ParcelRegionUUID = new string[count];
+                List<mapItemReply> mapitems = new List<mapItemReply>();
+                string ParcelRegionUUID;
+                string[] landingpoint;
 
                 foreach (Object o in dataArray)
                 {
@@ -593,47 +630,32 @@ namespace OpenSimSearch.Modules.OpenSearch
                     if (d["name"] == null)
                         continue;
 
-                    Landdata[i] = new DirLandReplyData();
-                    Landdata[i].parcelID = new UUID(d["parcel_id"].ToString());
-                    Landdata[i].name = d["name"].ToString();
-                    Landdata[i].auction = Convert.ToBoolean(d["auction"]);
-                    Landdata[i].forSale = Convert.ToBoolean(d["for_sale"]);
-                    Landdata[i].salePrice = Convert.ToInt32(d["sale_price"]);
-                    Landdata[i].actualArea = Convert.ToInt32(d["area"]);
-                    ParcelLandingPoint[i] = d["landing_point"].ToString();
-                    ParcelRegionUUID[i] = d["region_UUID"].ToString();
+                    mapItemReply mapitem = new mapItemReply();
 
-                    if (++i >= count)
-                        break;
-                }
+                    ParcelRegionUUID = d["region_UUID"].ToString();
 
-                List<mapItemReply> mapitems = new List<mapItemReply>();
-                uint locX = 0;
-                uint locY = 0;
-
-                i = 0;
-                foreach (DirLandReplyData landDir in Landdata)
-                {
                     foreach (Scene scene in m_Scenes)
                     {
-                        if (scene.RegionInfo.RegionID.ToString() == ParcelRegionUUID[i])
+                        if (scene.RegionInfo.RegionID.ToString() == ParcelRegionUUID)
                         {
-                            locX = scene.RegionInfo.RegionLocX;
-                            locY = scene.RegionInfo.RegionLocY;
+                            landingpoint = d["landing_point"].ToString().Split('/');
+
+                            mapitem.x = (uint)((scene.RegionInfo.RegionLocX * 256) +
+                                                Convert.ToDecimal(landingpoint[0]));
+                            mapitem.y = (uint)((scene.RegionInfo.RegionLocY * 256) +
+                                                Convert.ToDecimal(landingpoint[1]));
                             break;
                         }
                     }
-                    string[] landingpoint = ParcelLandingPoint[i].Split('/');
-                    mapItemReply mapitem = new mapItemReply();
-                    mapitem.x = (uint)((locX * 256) + Convert.ToDecimal(landingpoint[0]));
-                    mapitem.y = (uint)((locY * 256) + Convert.ToDecimal(landingpoint[1]));
-                    mapitem.id = landDir.parcelID;
-                    mapitem.name = landDir.name;
-                    mapitem.Extra = landDir.actualArea;
-                    mapitem.Extra2 = landDir.salePrice;
+
+                    mapitem.id = new UUID(d["parcel_id"].ToString());
+                    mapitem.Extra = Convert.ToInt32(d["area"]);
+                    mapitem.Extra2 = Convert.ToInt32(d["sale_price"]);
+                    mapitem.name = d["name"].ToString();
+
                     mapitems.Add(mapitem);
-                    i++;
                 }
+
                 remoteClient.SendMapItemReply(mapitems.ToArray(), itemtype, flags);
                 mapitems.Clear();
             }
@@ -677,15 +699,9 @@ namespace OpenSimSearch.Modules.OpenSearch
 
                 ArrayList dataArray = (ArrayList)result["data"];
 
-                int count = dataArray.Count;
-                if (count > 100)
-                    count = 101;
-
-                DirEventsReplyData[] Eventsdata = new DirEventsReplyData[count];
-
-                int i = 0;
-                string[] ParcelLandingPoint = new string[count];
-                string[] ParcelRegionUUID = new string[count];
+                List<mapItemReply> mapitems = new List<mapItemReply>();
+                string ParcelRegionUUID;
+                string[] landingpoint;
 
                 foreach (Object o in dataArray)
                 {
@@ -694,48 +710,32 @@ namespace OpenSimSearch.Modules.OpenSearch
                     if (d["name"] == null)
                         continue;
 
-                    Eventsdata[i] = new DirEventsReplyData();
-                    Eventsdata[i].ownerID = new UUID(d["owner_id"].ToString());
-                    Eventsdata[i].name = d["name"].ToString();
-                    Eventsdata[i].eventID = (uint)Convert.ToInt32(d["event_id"]);
-                    Eventsdata[i].date = d["date"].ToString();
-                    Eventsdata[i].unixTime = (uint)Convert.ToInt32(d["unix_time"]);
-                    Eventsdata[i].eventFlags = (uint)Convert.ToInt32(d["event_flags"]);
-                    ParcelLandingPoint[i] = d["landing_point"].ToString();
-                    ParcelRegionUUID[i] = d["region_UUID"].ToString();
+                    mapItemReply mapitem = new mapItemReply();
 
-                    if (++i >= count)
-                        break;
-                }
+                    ParcelRegionUUID = d["region_UUID"].ToString();
 
-                List<mapItemReply> mapitems = new List<mapItemReply>();
-                uint locX = 0;
-                uint locY = 0;
-
-                i = 0;
-
-                foreach (DirEventsReplyData Eventdata in Eventsdata)
-                {
                     foreach (Scene scene in m_Scenes)
                     {
-                        if (scene.RegionInfo.RegionID.ToString() == ParcelRegionUUID[i])
+                        if (scene.RegionInfo.RegionID.ToString() == ParcelRegionUUID)
                         {
-                            locX = scene.RegionInfo.RegionLocX;
-                            locY = scene.RegionInfo.RegionLocY;
+                            landingpoint = d["landing_point"].ToString().Split('/');
+
+                            mapitem.x = (uint)((scene.RegionInfo.RegionLocX * 256) +
+                                                Convert.ToDecimal(landingpoint[0]));
+                            mapitem.y = (uint)((scene.RegionInfo.RegionLocY * 256) +
+                                                Convert.ToDecimal(landingpoint[1]));
                             break;
                         }
                     }
-                    string[] landingpoint = ParcelLandingPoint[i].Split('/');
-                    mapItemReply mapitem = new mapItemReply();
-                    mapitem.x = (uint)((locX * 256) + Convert.ToDecimal(landingpoint[0]));
-                    mapitem.y = (uint)((locY * 256) + Convert.ToDecimal(landingpoint[1]));
+
                     mapitem.id = UUID.Random();
-                    mapitem.name = Eventdata.name;
-                    mapitem.Extra = (int)Eventdata.unixTime;
-                    mapitem.Extra2 = (int)Eventdata.eventID;
+                    mapitem.Extra = (int)Convert.ToInt32(d["unix_time"]);
+                    mapitem.Extra2 = (int)Convert.ToInt32(d["event_id"]);
+                    mapitem.name = d["name"].ToString();
+
                     mapitems.Add(mapitem);
-                    i++;
                 }
+
                 remoteClient.SendMapItemReply(mapitems.ToArray(), itemtype, flags);
                 mapitems.Clear();
             }
